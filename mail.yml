@@ -1,0 +1,11 @@
+- name: Send an email notification
+  mail:
+    host: "smtp.bodhee.io"
+    port: 587
+    username: "{{ username }}"
+    password: "{{ password }}"
+    from: "{{ from }}"
+    to: varun <varun.reddy@neewee.ai>
+    subject: "{{ email_subject }}"
+    body: "{{ email_body }}"
+    secure: starttls
