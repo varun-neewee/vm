@@ -1,0 +1,5 @@
+[proxmox]
+0.0.0.2 ansible_user= ansible_password=
+
+[vm]
+0.0.0.0 ansible_user= ansible_password=
