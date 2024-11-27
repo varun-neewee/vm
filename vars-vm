@@ -1,0 +1,7 @@
+vm_name: VM-name
+newid: 304
+ip_address: 0.0.0.0/24
+gateway: 0.0.0.1
+clamav_cron:
+  minute: "0"
+  hour: "0"
