@@ -1,0 +1,297 @@
+- name: Deploy Cloud-init VMs with a specific IP
+  hosts: proxmox
+  become: yes
+  vars_files:
+    - vars.yml
+    - secret.yml
+#  become: yes
+  tasks:
+    - name: Clone template
+      community.general.proxmox_kvm:
+        node: sr1
+        vmid: 100
+        clone: vm-template
+        name: "{{ vm_name }}"
+        newid: "{{ newid }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        api_host: "{{ proxmox_api_host }}"
+        storage: local-zfs
+        timeout: 90
+
+    - name: Set cloud-init IP configuration
+      community.general.proxmox_kvm:
+        node: sr1
+        name: "{{ vm_name }}"
+        newid: "{{ newid }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        api_host: "{{ proxmox_api_host }}"
+        ipconfig:
+          ipconfig0: "ip={{ ip_address }},gw={{ gateway }}"
+        update: yes
+
+    - name: Start VM
+      community.general.proxmox_kvm:
+        node: sr1
+        name: "{{ vm_name }}"
+        newid: "{{ newid }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        api_host: "{{ proxmox_api_host }}"
+        state: started
+
+    - name: Set VM memory
+      shell: qm set {{ newid }} --memory 16384
+      args:
+        executable: /bin/bash
+
+#    - name: Set VM disk
+#      shell: qm resize {{ newid }} scsi0 100G
+#      args:
+#        executable: /bin/bash
+#
+
+    - name: Set VM  core
+      shell: qm set {{ newid }} --cores 8
+      args:
+        executable: /bin/bash
+#
+
+#    - name: Set VM Storage
+#      shell: qm set {{ newid }} --scsi0 local-zfs:100G
+#      args:
+#        executable: /bin/bash
+
+    - name: Stop
+      shell: qm stop {{ newid }}
+      args:
+        executable: /bin/bash
+
+    - name: Wait for 10 seconds after starting the VM
+      pause:
+        seconds: 10
+
+    - name: Start
+      shell: qm start {{ newid }}
+      args:
+        executable: /bin/bash
+
+    - name: Wait for 60 seconds after starting the VM
+      pause:
+        seconds: 60
+
+- name: Configure and install services on the newly created VM
+  hosts: vm
+  become: yes
+  vars_files:
+    - vars.yml
+    - secret.yml
+  tasks:
+    - block:
+
+        - name: Update apt cache
+          command: sudo apt-get update
+
+        - name: Install zabbix-agent repo
+          command: wget https://repo.zabbix.com/zabbix/6.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.0-4+ubuntu22.04_all.deb -O /tmp/zabbix-release_6.0-4+ubuntu22.04_all.deb
+
+        - name: unpacking
+          command: dpkg -i /tmp/zabbix-release_6.0-4+ubuntu22.04_all.deb
+
+
+        - name: Update apt cache
+          command: apt-get update
+
+        - name: Install Zabbix agent
+          command: sudo apt install zabbix-agent2 zabbix-agent2-plugin-*
+
+        - name: Restart Zabbix agent
+          command: systemctl restart zabbix-agent2
+
+        - name: Enable Zabbix agent
+          command: systemctl enable zabbix-agent2
+
+        - name: Wait for 15 seconds
+          pause:
+            seconds: 30
+
+              #        - name: Update the apt
+              #          command: sudo apt-get update
+
+#        - name: Update the apt
+#          command: sudo dpkg --configure -a
+
+        - name: Install ClamAV and ClamAV daemon
+          apt:
+            name:
+              - clamav
+              - clamav-daemon
+            state: present
+
+        - name: Enable and start ClamAV daemon service
+          systemd:
+            name: clamav-daemon
+            enabled: yes
+            state: started
+
+        - name: Restart ClamAV service
+          systemd:
+            name: clamav-daemon
+            state: restarted
+
+        - name: Add Wazuh repository GPG key
+          command: apt-get install -y gpg
+
+        - name: Add Wazuh repository GPG key
+          apt_key:
+            url: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+            state: present
+
+        - name: Add Wazuh repository
+          apt_repository:
+            repo: "deb https://packages.wazuh.com/4.x/apt/ stable main"
+            state: present
+
+        - name: Update apt cache
+          apt:
+            update_cache: yes
+
+        - name: Install Wazuh agent
+          apt:
+            name: wazuh-agent
+            state: present
+
+        - name: Configure Wazuh agent
+          copy:
+            content: |
+              <ossec_config>
+                <client>
+                  <server>
+                    <address>{{ wazuh_manager_ip }}</address>
+                    <port>1514</port>
+                    <protocol>udp</protocol>
+                  </server>
+                </client>
+                <localfile>
+                  <log_format>syslog</log_format>
+                  <location>/var/log/syslog</location>
+                </localfile>
+                <localfile>
+                  <log_format>apache</log_format>
+                  <location>/var/log/apache2/access.log</location>
+                </localfile>
+              </ossec_config>
+            dest: /var/ossec/etc/ossec.conf
+            owner: root
+            mode: '0640'
+          notify:
+            - restart wazuh-agent
+
+        - name: Enable Wazuh agent service to start on boot
+          systemd:
+            name: wazuh-agent
+            enabled: yes
+
+        - name: Create txt file with paths
+          copy:
+            content: |
+              /var
+              /home
+              /tmp
+              /etc
+              /opt
+              /root
+            dest: /root/ClamScanTheseFolders.txt
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: Ensure /opt/scripts directory exists
+          file:
+            path: /opt/scripts
+            state: directory
+            mode: '0755'
+
+        - name: Copy scan.py to /opt/scripts
+          copy:
+            src: /home/varun/vm/scan.py
+            dest: /opt/scripts/scan.py
+            mode: '0755'
+
+        - name: Ensure cron is installed
+          ansible.builtin.package:
+            name: cron
+            state: present
+
+        - name: Ensure crontab executable is present
+          ansible.builtin.command: which crontab
+          register: crontab_path
+
+        - name: Ensure ClamAV cron job exists
+          cron:
+            name: "ClamAV Scan"
+            minute: "{{ clamav_cron.minute }}"
+            hour: "{{ clamav_cron.hour }}"
+            job: 'clamscan -r -z -i --bell --file-list=/root/ClamScanTheseFolders.txt > /root/clamscan.txt && echo "servername : $(cat /etc/hostname)" >> /root/clamscan.txt && python3 /opt/scripts/scan.py'
+            user: root
+
+#        - name: Ensure users are present
+#          ansible.builtin.user:
+#            name: "{{ item.name }}"
+#            password: "{{ item.password }}"
+#            shell: "{{ item.shell }}"
+ #           groups: "{{ item.groups }}"
+ #          state: present
+ #         loop: "{{ users }}"
+#
+#        - name: Create .ssh directory
+#          file:
+#            path: "/home/{{ item.name }}/.ssh"
+#            state: directory
+#            owner: "{{ item.name }}"
+#            group: "{{ item.name }}"
+#            mode: '0700'
+#          loop: "{{ users }}"
+#
+ #       - name: Add SSH key for users
+ #         copy:
+ #           content: "{{ item.key }}"
+ #           dest: "/home/{{ item.name }}/.ssh/authorized_keys"
+ #           owner: "{{ item.name }}"
+ #           group: "{{ item.name }}"
+ #           mode: '0600'
+ #         loop: "{{ users }}"
+
+        - name: Set success email variables
+          set_fact:
+            email_subject: "Ansible Playbook Succeeded"
+            email_body: |
+              The Ansible playbook has successfully completed execution.
+              Hostname: {{ vm_name }}
+              IP_Address: {{ ip_address }}
+
+      rescue:
+        - name: Set failure email variables
+          set_fact:
+            email_subject: "Ansible Playbook Failed"
+            email_body: |
+              The Ansible playbook encountered an error. Please check the logs for details.
+              Hostname: {{ vm_name }}
+              IP_Address: {{ ip_address }}
+              Error_Message: {{ ansible_failed_result }}
+
+#        - include_tasks: send_email.yml
+
+      always:
+        - name: Send email notification
+          include_tasks: send_email.yml
+
+    - name: Reboot the VM
+      reboot:
+
+  handlers:
+    - name: restart wazuh-agent
+      systemd:
+        name: wazuh-agent
+        state: restarted
