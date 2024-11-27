@@ -1,0 +1,42 @@
+- name: Deploy Cloud-init VMs with a specific IP
+  hosts: proxmox
+  become: yes
+  vars_files:
+    - vars.yml
+    - secret.yml
+#  become: yes
+  tasks:
+    - name: Clone template
+      community.general.proxmox_kvm:
+        node: sr1
+        vmid: 101
+        clone: vm-template1
+        name: "{{ vm_name }}"
+        newid: 100
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        api_host: "{{ proxmox_api_host }}"
+        storage: local-zfs
+        timeout: 90
+
+    - name: Set cloud-init IP configuration
+      community.general.proxmox_kvm:
+        node: sr1
+        name: "{{ vm_name }}"
+        newid: "{{ newid }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        api_host: "{{ proxmox_api_host }}"
+        ipconfig:
+          ipconfig0: "ip={{ ip_address }},gw={{ gateway }}"
+        update: yes
+
+    - name: Start VM
+      community.general.proxmox_kvm:
+        node: sr1
+        name: "{{ vm_name }}"
+        newid: "{{ newid }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        api_host: "{{ proxmox_api_host }}"
+        state: started
