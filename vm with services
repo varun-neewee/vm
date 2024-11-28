@@ -56,12 +56,6 @@
       shell: qm set {{ newid }} --cores 8
       args:
         executable: /bin/bash
-#
-
-#    - name: Set VM Storage
-#      shell: qm set {{ newid }} --scsi0 local-zfs:100G
-#      args:
-#        executable: /bin/bash
 
     - name: Stop
       shell: qm stop {{ newid }}
